@@ -1,0 +1,328 @@
+post_load: {
+	exportType("HttpServer")
+	exportType("Request")
+	exportType("Response")
+	exportType("Controller")
+	export(@handle)
+	export(controller)
+}
+
+record HttpServer(port_value) {
+	port : number = port_value
+	socket : Server = server(port_value)
+	controllers : map<<Controller>> = new map<<Controller>>
+	
+	/* Luku */
+	
+	function read connection, &request {
+		request := new Request
+		request.server = self
+		request.connection = connection
+		connection.readLine(line)
+		things := [split(line)]
+		if [ #things >= 3 ]; do
+			request.command = things[0]
+			request.path = things[1]
+			request.protocol = things[2]
+			request.protocol ~= "\r?\n$", ""
+		else
+			/* kysely on väärän muotoinen */
+			/* TODO: virheenkäsittely */
+			request.valid = FALSE
+			connection.close()
+			return
+		done
+		request.path ~= "^([a-z0-9]+://)?[^/]+", ""
+		length := 0
+		request.headers = new map<<string>>
+		request.as_text = ""
+		while [ not (line =~ "\r?\n") ]; do
+			request.as_text .= line
+			line = connection.readLine()
+			if [ line =~ "[A-Za-z\\-]+:[ \t]*.*\r?\n" ]; do
+				header_name := line
+				header_name ~= ":[ \t]*.*\r?\n$", ""
+				header_value := line
+				header_value ~= "^[A-Za-z\\-]+:[ \t]*", "", "\r?\n$", ""
+				request.headers[header_name] = header_value
+			done
+			if [ line =~ "Content-Length: .*\r?\n" ]; do
+				cl := line
+				cl ~= "^Content-Length: ", "", "\r?\n$", ""
+				length = parseInteger(cl)
+			done
+		done
+		request.content = ""
+		if [ length > 0 ]; do
+			connection.readString(length, content)
+			request.content = content
+		done
+		request.form = new map<<string>>
+		if push(request.headers["Content-Type"]?); do
+			if [ request.headers["Content-Type"] =~ "application/x-www-form-urlencoded(;.*)?" ]; do
+				for param in [split(request.content, sep="&")] do
+					kv := [split(param, sep="=")]
+					if [ #kv = 2 ]; do
+						key := kv[0]
+						val := kv[1]
+						val ~= "\\+", " "
+						code := new list<<number>>
+						i := 0
+						while [ i < #val ] do
+							if [ val[i:i+1] = "%" and i < #val-2 ]; do
+								code += parseInteger(val[i+1:i+3], radix=16)
+								i += 3
+							else
+								code .= stringToBytes(val[i:i+1])
+								i += 1
+							done
+						done
+						request.form[key] = bytesToString(code)
+					done
+				done
+			done
+		done
+	}
+	
+	/* Lähetys */
+	
+	function sendContinue connection {
+		response := "HTTP/1.1 100 Continue\r\n\r\n"
+		connection.write(response)
+	}
+	
+	/* Ohjaus */
+	
+	function handle connection {
+		while true; do
+			self.read(connection, request)
+			if push(request.valid); do
+				try do
+					request.handle()
+				catch e
+					date := "["..[{}()|bufferedExec("date", "+%d.%m.%Y/%H:%M")][0].."] "
+					errprint(date, (typeof e).name, ": ", e.message, "\n")
+					try do
+						request.send500(e)
+					catch e2
+						date = "["..[{}()|bufferedExec("date", "+%d.%m.%Y/%H:%M")][0].."] "
+						errprint(date, (typeof e2).name, ": ", e2.message, "\n")
+					done
+				done
+			else
+				break
+			done
+		done
+	}
+	
+	function update {
+		connection := self.socket.accept()
+		date := "["..[{}()|bufferedExec("date", "+%d.%m.%Y/%H:%M")][0].."]"
+		print(date.." Connection from "..connection.hostname.." ("..connection.ip..":"..connection.port..").")
+		handler := thread({ self.handle(connection) })
+		handler.start()
+	}
+}
+
+record Request {
+	valid : boolean = TRUE
+	command : string
+	path : string
+	protocol : string
+	headers : map<<string>>
+	as_text : string
+	content : string
+	form : map<<string>>
+	server : HttpServer
+	connection : Socket
+	
+	function send status, data, mime="text/html" {
+		new Response(self).send status, data, mime=mime
+	}
+	
+	function sendFile mime, name {
+		new Response(self).sendFile mime, name
+	}
+	
+	function redirect target {
+		new Response(self).redirect target
+	}
+	
+	function send403 {
+		new Response(self).send403
+	}
+	
+	function send404 {
+		new Response(self).send404
+	}
+	
+	function send412 {
+		new Response(self).send412
+	}
+	
+	function send500 err {
+		new Response(self).send500 err
+	}
+	
+	function handle {
+		if push(self.headers["If-Unmodified-Since"]?); do
+			self.send412()
+			return
+		done
+		path := match("(/[^/]*)(/[^/]*)*", self.path)
+		if [ #path = 0 ]; do path = ["/", "/", ""]; done
+		if push self.server.controllers[path[1]]?; do
+			ctrl := self.server.controllers[path[1]]
+			type := typeof ctrl
+			for f in type.fields do
+				for a in f.annotations do
+					if [ #a = 2 and a[0] = "HANDLE" and self.path =~ a[1] ]; do
+						handler := f.get(ctrl)
+						handler(self)
+						return
+					done
+				done
+			done
+			ctrl.handle(self)
+		else
+			self.send404()
+		done
+	}
+}
+
+record Response(request) {
+	request : Request = request
+	connection : Socket = request.connection
+	protocol : string = request.protocol
+	server : HttpServer = request.server
+	cookies : list<<string>> = new list<<string>>
+	cookie_values : map<<string>> = new map<<string>>
+	
+	function contentHeaders type, length {
+		content_headers := ""
+		if [ length != 0 ]; do
+			content_headers = "Content-Type: "..type.."\r\n"
+			content_headers .= "Content-Length: "..length.."\r\n"
+			content_headers .= "Accept-Ranges: bytes\r\n"
+		done
+		return content_headers
+	}
+	
+	function cookieHeaders {
+		return [
+			push("Set-Cookie: " .. name .. "=" .. self.cookie_values[name] .. "\r\n") for name in self.cookies
+		] & ""
+	}
+	
+	function createHeaders content_headers, status {
+		headers := ""
+		if [ self.protocol != "HTTP/1.0" ]; do
+			headers = "HTTP/1.1 "..status.."\r\n"
+			headers .= "Server: http_server.roed\r\n"
+			headers .= "Date: "
+			env := new map
+			env["LC_TIME"] = "c.UTF-8"
+			headers .= [{}()|exec("date", "-u", "+%a, %b %d %Y %H:%M:%S GMT", env=env)][:-1]&"".."\r\n"
+			headers .= content_headers
+			headers .= self.cookieHeaders()
+			headers .= "Connection: keep-alive\r\n"
+			headers .= "\r\n"
+		else
+			headers = "HTTP/1.0 "..status.."\r\n"
+			headers .= "Server: httpd.roed\r\n"
+			headers .= content_headers
+			headers .= self.cookieHeaders()
+			headers .= "\r\n"
+		done
+		return headers
+	}
+	
+	function send status, data, mime="text/html" {
+		response := self.createHeaders(self.contentHeaders(mime.."; charset=utf-8", strsize(data)), status)
+		if [ self.request.command != "HEAD" ]; do
+			response .= data
+		done
+		self.connection.writeStrings(response)
+	}
+	
+	function sendFile mime, name {
+		response := self.createHeaders(self.contentHeaders(mime, fileLength(name)), "200 OK")
+		self.connection.writeStrings(response)
+		if [ self.request.command != "HEAD" ]; do
+			self.connection.writeFile(name)
+		done
+	}
+	
+	function redirect target {
+		if [ self.protocol = "HTTP/1.0" ]; do
+			push("302 Found")
+		else
+			push("303 See Other")
+		done | pull(status_code)
+		data := "<html>
+		<head><title>"..status_code.."</title></head>
+		<body><h1>"..status_code.."</h1>
+		<p>The document is <a href=\""..target.."\">here</a>.</p>
+		</body>
+		</html>
+		"
+		headers := self.contentHeaders("text/html; charset=utf-8", strsize(data)).."Location: "..target.."\r\n"
+		response := self.createHeaders(headers, status_code)
+		if [ self.request.command != "HEAD" ]; do
+			response .= data
+		done
+		self.connection.writeStrings(response)
+	}
+	
+	function send403 {
+		self.send("403 Forbidden", "<html>
+		<head><title>403 Forbidden</title></head>
+		<body><h1>403 Forbidden</h1>
+		<hr/>
+		<p><i>http_server.röd</i></p></body>
+		</html>")
+	}
+	
+	function send404 {
+		self.send("404 Not found", "<html>
+		<head><title>404 Not found</title></head>
+		<body><h1>404 Not found</h1><p>The resource you were looking for doesn't exist.</p>
+		<hr/>
+		<p><i>http_server.röd</i></p></body>
+		</html>")
+	}
+	
+	function send412 {
+		self.send("412 Precondition failed", "")
+	}
+	
+	function send500 err {
+		self.send("500 Internal server error", "<html>
+		<head><title>500 Internal server error</title></head>
+		<body><h1>500 Internal server error</h1><p>Diagnostics:</p>
+		<pre>"..err.message.."</pre>
+		<pre>"..[err.stack() | replace("<", "&lt;")]&"\n".."</pre>
+		<hr/>
+		<p><i>http_server.röd</i></p></body>
+		</html>")
+	}
+	
+	function setCookie name, v {
+		cookies += name unless [ name in cookies ]
+		cookie_values[name] = v
+	}
+}
+
+function @handle path {
+	return ["HANDLE", path]
+}
+
+record Controller {
+	handle : function
+}
+
+controller handler {
+	ctrl := new Controller
+	ctrl.handle = handler
+	push ctrl
+}

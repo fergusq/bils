@@ -1,0 +1,3 @@
+{
+	localImport("irc_client.röd")
+}

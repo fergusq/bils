@@ -1,0 +1,31 @@
+function plotXY(height=20, axis=TRUE, miv=FALSE, mav=FALSE) {
+	{
+		points := sum(fst=[])
+		xs := [points() | [ x ] for x, y]
+		ys := [points() | [ y ] for x, y]
+		mav = ceil(max(ys))//1 if [ mav is boolean ]
+		miv = floor(min(ys))//1 if [ miv is boolean ]
+		margin_width := max([#`$mav`, #`$miv`])
+		step := 1+(mav-miv)//height
+		seq mav, miv, step = step | for v do
+			push " "*(margin_width - #`$v`), v
+			seq 0, #ys-1 | round(ys[_1]) | push "*" if [ _1-v >= 0 and _1-v < step ] else push " "
+			push "\n"
+		done
+		push " "*margin_width
+		seq 0, (#ys-1)//5 | for i do
+			x := xs[i*5]
+			push x, " "*(5-#`$x`)
+		done
+		push "\n"
+	} | concat
+}
+
+function plotY(height=20, axis=TRUE, miv=FALSE, mav=FALSE) {
+	enum | [ _2, _1 ] | plotXY(height=height, axis=axis, miv=miv, mav=mav)
+}
+
+post_load: {
+	export(plotXY)
+	export(plotY)
+}

@@ -1,0 +1,9 @@
+case x {
+	default := TRUE
+	push { |ys...|; for y in ys if [ x =~ y ] do rval := default; default = FALSE; return rval; done; return FALSE }
+	push { return default }
+}
+
+post_load: {
+	export(case)
+}

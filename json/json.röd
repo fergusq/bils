@@ -1,0 +1,33 @@
+post_load: {
+	export(jsonToRödaObj)
+	export(JSON_TYPE_FUNCTIONS)
+}
+
+function jsonToRödaObj(json_tree) {
+	JSON_TYPE_FUNCTIONS[json_tree[0]] json_tree
+}
+
+{
+	NULL := "null"
+	
+	JSON_TYPE_FUNCTIONS := new map
+	JSON_TYPE_FUNCTIONS["LIST"] = { |json_tree|
+		return [JSON_TYPE_FUNCTIONS[elem[0]](elem) for elem in json_tree[1]]
+	}
+	JSON_TYPE_FUNCTIONS["MAP"] = { |json_tree|
+		objmap := new map
+		for elem in json_tree[1] do
+			objmap[elem[0]] = JSON_TYPE_FUNCTIONS[elem[1][0]](elem[1])
+		done
+		return objmap
+	}
+	JSON_TYPE_FUNCTIONS["STRING"] = { |json_tree|; return json_tree[1] }
+	JSON_TYPE_FUNCTIONS["NUMBER"] = JSON_TYPE_FUNCTIONS["STRING"]
+	JSON_TYPE_FUNCTIONS["BOOLEAN"] = { |json_tree|
+		return TRUE if [ json_tree[1] = "true" ]
+		return FALSE
+	}
+	JSON_TYPE_FUNCTIONS["NULL"] = { |json_tree|
+		return NULL
+	}
+}

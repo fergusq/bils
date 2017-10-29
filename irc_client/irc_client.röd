@@ -1,0 +1,82 @@
+record Handler {}
+
+record HandleAnnotation(command) {
+	command : string = command
+}
+
+function @handle command {
+	return new HandleAnnotation(command)
+}
+
+record IrcClient : Handler {
+	host : string
+	port : integer
+	connection : Socket
+	handlers : list<<Handler>> = new list<<Handler>>([self])
+	
+	function connect(host : string, port : integer) {
+		self.connection = connect(host, port)
+		self.host = host
+		self.port = port
+	}
+	
+	function send(command : string, arg : string) {
+		errprint ">>> ", command, " ", arg, "\n"
+		self.connection.writeStrings command, " ", arg, "\n"
+	}
+	
+	function sendPass(pass) {
+		self.send "PASS", pass
+	}
+	
+	function sendNick(nickname) {
+		self.send "NICK", nickname
+	}
+	
+	function sendUser(user_name, user_host, user_server, real_name) {
+		self.send "USER", `$user_name $user_host $user_server :$real_name`
+	}
+	
+	function sendJoin(channel) {
+		self.send "JOIN", channel
+	}
+	
+	function sendPrivmsg(receiver, msg) {
+		self.send "PRIVMSG", `$receiver :$msg`
+	}
+	
+	function sendPong(token) {
+		self.send "PONG", token
+	}
+	
+	function update {
+		line := self.connection.readLine()
+		line ~= "\r?\n$", ""
+		
+		errprint "<<< ", line, "\n" if [ line !~ "\\s*" ]
+		fields := [split(line, sep=" ")]
+		sender := fields[0]
+		command := push("PING") if [ sender = "PING" ] else push(fields[1])
+		message := fields[push(1) if [ command = "PING" ] else push(2):]&" "
+		for handler in self.handlers do
+			for f in (typeof handler).fields do
+				for a in f.annotations do
+					if [ a is HandleAnnotation and a.command = command ]; do
+						(f.get(handler)) sender, command, message
+					done
+				done
+			done
+		done
+	}
+	
+	@handle "PING"
+	function handlePing(sender, command, arg) {
+		self.sendPong(arg)
+	}
+}
+
+post_load: {
+	export(@handle)
+	exportType("IrcClient")
+	exportType("Handler")
+}

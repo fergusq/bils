@@ -1,0 +1,30 @@
+post_load: {
+	{ |&vars...|; export var for var in vars } (
+		logExec,
+		dirpath,
+		basename,
+		mkdir,
+		expectDir,
+		cp,
+		mv,
+		rm,
+		chmod
+	)
+}
+
+function logExec cmd, args... {
+	args_str := [args() | replace(`\\`, `\\\\`, `"`, `\\"`) | [`"$_1"`] if [`\` in _1 or " " in _1] else [_1]]&" "
+	errprint(`>>> $cmd $args_str`, "\n")
+	{} | bufferedExec(cmd, *args) | {}
+}
+function dirpath dir {dir~="/$","";[dir]}
+function basename file {file~="^(.*/)*","";[file]}
+function mkdir dir {logExec("mkdir", "-p", dir)}
+function expectDir path {
+	mkdir(path) unless fileExists(path)
+	error("'"..path.."' is not a directory") unless isDirectory(path)
+}
+function cp file1, file2 {logExec("cp", file1, file2)}
+function mv file1, file2 {logExec("mv", file1, file2)}
+function rm file {logExec("rm", file)}
+function chmod args... {logExec("chmod", *args)}
