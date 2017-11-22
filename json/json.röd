@@ -1,6 +1,10 @@
 post_load: {
 	export(jsonToRödaObj)
 	export(JSON_TYPE_FUNCTIONS)
+	
+	export(@jsonField)
+	exportType("JsonField")
+	export(mapToRecord)
 }
 
 function jsonToRödaObj(json_tree) {
@@ -30,4 +34,30 @@ function jsonToRödaObj(json_tree) {
 	JSON_TYPE_FUNCTIONS["NULL"] = { |json_tree|
 		return NULL
 	}
+}
+
+function @jsonField(name : string) {
+	return new JsonField(name)
+}
+
+record JsonField(n) {
+	name : string = n
+}
+
+function mapToRecord(m, c) {
+	obj := c.newInstance()
+	c.fields | for field do
+		for a in field.annotations if [ a is JsonField ] do
+			push(a.name) 
+		done | if tryPull(n) do
+			if [ m[n] is string and m[n] = "null" ] do
+				try field.set(obj, 0)
+				try field.set(obj, "")
+			else
+				field.set(obj, m[n])
+			done
+		done
+		
+	done
+	return obj
 }
