@@ -1,6 +1,7 @@
 post_load: {
 	{ |&vars...|; export var for var in vars } (
 		logExec,
+		logBufferedExec,
 		dirpath,
 		basename,
 		mkdir,
@@ -16,6 +17,11 @@ function logExec cmd, args... {
 	args_str := [args() | replace(`\\`, `\\\\`, `"`, `\\"`) | [`"$_1"`] if [`\` in _1 or " " in _1] else [_1]]&" "
 	errprint(`>>> $cmd $args_str`, "\n")
 	{} | bufferedExec(cmd, *args) | {}
+}
+function logBufferedExec cmd, args... {
+	args_str := [args() | replace(`\\`, `\\\\`, `"`, `\\"`) | [`"$_1"`] if [`\` in _1 or " " in _1] else [_1]]&" "
+	errprint(`>>> $cmd $args_str`, "\n")
+	bufferedExec(cmd, *args)
 }
 function dirpath dir {dir~="/$","";[dir]}
 function basename file {file~="^(.*/)*","";[file]}
