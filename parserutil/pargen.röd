@@ -1,0 +1,227 @@
+{
+	case := require("case").case
+	pt := require("parserutil")
+}
+
+main args... {
+	if [ #args != 1 ] do
+		errprint("Usage: pargen [file]")
+		return
+	done
+	readLines args[0] | parse | _.generate
+}
+
+parse {
+	{
+		filter { |line| [line != ""] } |
+			push _, ";" | split sep=`\s`
+		push "< EOF >"
+	} | pt.removeSpaces |
+	{
+		parseGrammar
+		pt.accept "< EOF >"
+	}
+}
+
+parseGrammar {
+	grammar := new Grammar
+	until pt.nextIs "< EOF >" do
+		parseRule grammar | pull rule_name, body, type
+		unless [ grammar.rules_map[rule_name]? ] do
+			rule := new Rule(grammar, rule_name, new CaseExpression(grammar), type)
+			grammar.rules += rule
+			grammar.rules_map[rule_name] = rule
+		done
+		grammar.rules_map[rule_name].body.cases += body
+	done
+	push grammar
+}
+
+parseRule grammar {
+	head 1 /* name */
+	pt.accept "->"
+	parseConcatExpression grammar
+	if pt.nextIs ":" do
+		pt.accept ":"
+		head 1 /* type */
+	else
+		push ""
+	done
+	pt.accept ";"
+}
+
+parseConcatExpression grammar {
+	expr := new ConcatExpression(grammar)
+	until pt.nextIs ":", ";", "}", "]" do
+		n := ""
+		n = (pull()[:-1]) if [ peek() =~ `\w*=` ]
+		prim := parsePrimary(grammar)
+		expr.subs += new ConcatField(n, prim)
+	done
+	push expr
+}
+
+parsePrimary grammar {
+	pt.fork
+	pt.path "[", {
+		push new ZeroOrOneExpression(grammar, parseConcatExpression(grammar))
+		pt.accept "]"
+	}
+	pt.path "{", {
+		push new ZeroOrMoreExpression(grammar, parseConcatExpression(grammar))
+		pt.accept "}"
+	}
+	pt.otherPath {
+		pull token
+		if [ token[0:1] = "$" ] do
+			push new ReferenceExpression(grammar, token[1:])
+		else
+			push new LiteralExpression(grammar, token)
+		done
+	}
+	pt.endfork
+}
+
+record Grammar {
+	rules_map : map<<Rule>> = new map<<Rule>>
+	rules : list<<Rule>> = new list<<Rule>>
+	
+	function generate {
+		start := new ConcatExpression(self)
+		start.subs += new ConcatField("n", new ReferenceExpression(self, "Start")), new ConcatField("", new LiteralExpression(self, "EOF"))
+		new Rule(self, "All", start, "TreeRoot").generate
+		self.rules | _.generate
+	}
+}
+
+record Rule(grammar, n, b, t) {
+	grammar : Grammar = grammar
+	name : string = n
+	body : Expression = b
+	type : string = t
+	
+	function generate {
+		print `${self.type} parse_${self.name}() {`
+		print "\t", `${self.type} ans;` if [ self.type != "" ]
+		self.body.generate 1, "ans"
+		print "\t", `return ans;` if [ self.type != "" ]
+		print `}`
+	}
+}
+
+record Expression(grammar) {
+	grammar : Grammar = grammar
+}
+
+record CaseExpression(grammar) : Expression(grammar) {
+	cases : list<<Expression>> = new list<<Expression>>
+	
+	function startingLiterals next {
+		self.cases | _.startingLiterals next
+	}
+	
+	function generate i, var {
+		if [ #self.cases = 1 ] do
+			print "\t"*i, `// `, [self.cases[0].startingLiterals({})]&","
+			self.cases[0].generate i, var
+			return
+		done
+		for case in self.cases do
+			print "\t"*i, `if (lookahead(${[case.startingLiterals({})]&","})) {`
+			case.generate i+1, var
+			print "\t"*i, `} else`
+		done
+		print "\t"*i, `error();`
+	}
+}
+
+record ConcatExpression(grammar) : Expression(grammar) {
+	subs : list<<ConcatField>> = new list<<ConcatField>>
+	
+	function startingLiterals next {
+		self.startingLiteralsAt 0, next
+	}
+	
+	function startingLiteralsAt index, next {
+		return *(next()) if [ index >= #self.subs ]
+		self.subs[index].expr.startingLiterals { self.startingLiteralsAt(index+1, next) }
+	}
+	
+	function generate i, var {
+		for sub in self.subs do
+			case sub.var | pull(matches, noMatch)
+			if matches "" do
+				sub.expr.generate i, ``
+			done
+			if matches "return" do
+				sub.expr.generate i, `ans`
+			done
+			if noMatch do
+				sub.expr.generate i, `$var->${sub.var}`
+			done
+		done
+	}
+}
+
+record ConcatField(n, expr) {
+	var : string = n
+	expr : Expression = expr
+}
+
+record ZeroOrOneExpression(grammar, sub) : Expression(grammar) {
+	sub : Expression = sub
+	
+	function startingLiterals next {
+		self.sub.startingLiterals {}
+		next
+	}
+	
+	function generate i, var {
+		print "\t"*i, `if (lookahead(${[self.sub.startingLiterals({})]&","})) {`
+		self.sub.generate i+1, var
+		print "\t"*i, `}`
+	}
+}
+
+record ZeroOrMoreExpression(grammar, sub) : Expression(grammar) {
+	sub : Expression = sub
+	
+	function startingLiterals next {
+		self.sub.startingLiterals {}
+		next
+	}
+	
+	function generate i, var {
+		print "\t"*i, `while (lookahead(${[self.sub.startingLiterals({})]&","})) {`
+		print "\t"*(i+1), `grow($var);` if [ var != "" ]
+		self.sub.generate i+1, `$var->ptr[last_index($var)]` if [ var != "" ] else self.sub.generate i+1, ""
+		print "\t"*i, `}`
+	}
+}
+
+record LiteralExpression(grammar, lit) : Expression(grammar) {
+	literal : string = lit
+	
+	function startingLiterals next {
+		return self.literal
+	}
+	
+	function generate i, var {
+		print "\t"*i, `accept(${self.literal});`
+		print "\t"*i, `$var = ${self.literal};` if [ var != "" ]
+	}
+}
+
+record ReferenceExpression(grammar, ref) : Expression(grammar) {
+	ref : string = ref
+	
+	function startingLiterals next {
+		self.grammar.rules_map[self.ref].body.startingLiterals next
+	}
+	
+	function generate i, var {
+		push "\t"*i
+		push `$var = ` if [ var != "" ]
+		print `parse_${self.ref}();`
+	}
+}

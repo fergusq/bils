@@ -1,0 +1,6 @@
+# name = parserutil
+# version = 1.0.0
+# dependencies[]:
+case
+# executables[]:
+pargen.röd

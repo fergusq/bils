@@ -1,0 +1,77 @@
+post_load: {
+	{ |&vars...|; export var for var in vars } (
+		removeSpaces,
+		nextIs,
+		fork,
+		endfork,
+		path,
+		otherPath,
+		accept,
+		oneOf
+	)
+}
+
+removeSpaces {
+	for x do
+		push x unless [ x =~ "\\s*" ]
+	done
+}
+
+{
+	DEBUG := FALSE
+	level := 0
+
+	path_found := FALSE
+	branches := []
+}
+
+nextIs tokens... {
+	return peek() in tokens
+}
+
+fork {
+	level ++
+	path_found = FALSE
+	branches = []
+}
+
+endfork {
+	level --
+	unless [ path_found ] do
+		error("Syntax error at token `"..peek().."', expected one of: "..("`"..branches.."'")&", ")
+	done
+}
+
+path token, callback {
+	branches += token
+	if [ not path_found and nextIs(token) ] do
+		errprint(" "*level, "Chose path ", token, "\n") if [ DEBUG ]
+		pull() | {}
+		callback()
+		path_found = TRUE
+	done
+}
+
+otherPath callback {
+	unless [ path_found ] do
+		errprint(" "*level, "Chose the other path (starting with ", peek(), ")\n") if [ DEBUG ]
+		path_found = TRUE
+		callback()
+	done
+}
+
+accept token {
+	pull(x)
+	if [ x != token ] do
+		error("Syntax error at token `"..x.."', expected `"..token.."'")
+	done
+	errprint(" "*level, "Accepted ", token, "\n") if [ DEBUG ]
+}
+
+oneOf tokens... {
+	unless nextIs *tokens do
+		error("Syntax error at token `"..peek().."', expected one of: "..("`"..tokens.."'")&", ")
+	done
+	errprint(" "*level, "Accepted ", peek(), "\n") if [ DEBUG ]
+	pull()
+}
