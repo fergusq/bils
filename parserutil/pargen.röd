@@ -1,3 +1,5 @@
+#!/usr/bin/env röda
+
 {
 	case := require("case").case
 	pt := require("parserutil")
