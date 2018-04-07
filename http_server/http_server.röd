@@ -44,11 +44,11 @@ record HttpServer(port_value) {
 				header_name ~= ":[ \t]*.*\r?\n$", ""
 				header_value := line
 				header_value ~= "^[A-Za-z\\-]+:[ \t]*", "", "\r?\n$", ""
-				request.headers[header_name] = header_value
+				request.headers[lowerCase(header_name)] = header_value
 			done
-			if [ line =~ "Content-Length: .*\r?\n" ]; do
+			if [ line =~ "(?i)content-length: .*\r?\n" ]; do
 				cl := line
-				cl ~= "^Content-Length: ", "", "\r?\n$", ""
+				cl ~= "(?i)^content-length: ", "", "\r?\n$", ""
 				length = parseInteger(cl)
 			done
 		done
@@ -58,8 +58,8 @@ record HttpServer(port_value) {
 			request.content = content
 		done
 		request.form = new map<<string>>
-		if push(request.headers["Content-Type"]?); do
-			if [ request.headers["Content-Type"] =~ "application/x-www-form-urlencoded(;.*)?" ]; do
+		if push(request.headers["content-type"]?); do
+			if [ request.headers["content-type"] =~ "application/x-www-form-urlencoded(;.*)?" ]; do
 				for param in [split(request.content, sep="&")] do
 					kv := [split(param, sep="=")]
 					if [ #kv = 2 ]; do
@@ -165,7 +165,7 @@ record Request {
 	}
 	
 	function handle {
-		if push(self.headers["If-Unmodified-Since"]?); do
+		if push(self.headers["if-unmodified-since"]?); do
 			self.send412()
 			return
 		done
