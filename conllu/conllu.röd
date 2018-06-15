@@ -1,0 +1,77 @@
+post_load: {
+	export(parseSentences)
+	exportType("Word")
+}
+
+function parseSentences filename {
+	parser := new SentenceParser
+	readLines filename | enum | for line, i do
+		continue if [ #line = 0 or line[:1] = "#" ]
+		fields := line / "\t"
+		num := fields[0]
+		parser.startSentence if [ num = "1" ]
+		parser.processWord *fields
+	done
+}
+
+record SentenceParser {
+	current_sentence : list = []
+
+	function startSentence {
+		self.saveSentence if [ #self.current_sentence > 0 ]
+		self.current_sentence = []
+	}
+
+	function saveSentence {
+		for word in self.current_sentence do
+			if [ word.parent_num != 0 ] do
+				word.parent = self.current_sentence[word.parent_num-1]
+				word.parent.children[word.relation] = new list<<Word>> unless [ word.parent.children[word.relation]? ]
+				word.parent.children[word.relation] += word
+				word.parent.children_list += word
+				keys word.arg_to | for argname do
+					par_id := word.arg_to[argname]
+					par := self.current_sentence[par_id-1]
+					par.args[argname] = word
+				done
+			else
+				push word
+			done
+		done
+	}
+
+	function processWord num, word, lemma, pos, pos2, form, parent, relation, arg, sense {
+		self.current_sentence += new Word(num, word, lemma, pos, form, parent, relation, arg, sense)
+	}
+}
+
+parseList str {
+	ans := new map<<string>>
+	return ans if [ str = "_" ]
+	(str / `=|\|`) | ans[_] = _
+	return ans
+}
+
+record Word(num, word, lemma, pos, form, parent, relation, arg, sense) {
+	num : integer = parseInteger(num)
+	word : string = word
+	lemma : string = lemma
+	pos : string = pos
+	form : map<<string>> = parseList(form)
+	parent : Word
+	parent_num : integer = parseInteger(parent)
+	relation : string = relation
+	arg_to : map<<integer>> = {
+		ans := new map<<integer>>
+		return ans if [ arg = "_" ]
+		[arg / `:|\|`] | for pair do
+			ans[pair[1:]&":"] = parseInteger(pair[0])
+		done
+		return ans
+	}()
+	sense : map<<string>> = parseList(sense)
+	
+	children : map<<list<<Word>>>> = new map<<list<<Word>>>>
+	children_list : list<<Word>> = new list<<Word>>
+	args : map<<Word>> = new map<<Word>>
+}
