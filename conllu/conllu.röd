@@ -23,6 +23,7 @@ record SentenceParser {
 	}
 
 	function saveSentence {
+		ans := 0
 		for word in self.current_sentence do
 			if [ word.parent_num != 0 ] do
 				word.parent = self.current_sentence[word.parent_num-1]
@@ -35,9 +36,10 @@ record SentenceParser {
 					par.args[argname] = word
 				done
 			else
-				push word
+				ans := word
 			done
 		done
+		push ans if [ ans is Word ]
 	}
 
 	function processWord num, word, lemma, pos, pos2, form, parent, relation, arg, sense {
